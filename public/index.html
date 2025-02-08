@@ -35,6 +35,7 @@ let peerConnection;
 let dataChannel;
 let ws;
 let roomName;
+let isInitiator = false; // Track whether this peer is the offerer
 
 function joinRoom() {
     roomName = document.getElementById("roomInput").value;
@@ -52,8 +53,10 @@ function joinRoom() {
         console.log("[WebSocket] Received:", message);
 
         if (message.type === "offer") {
+            isInitiator = false; // This peer is the receiver
             setupPeerConnection(false);
             await peerConnection.setRemoteDescription(new RTCSessionDescription(message.offer));
+
             const answer = await peerConnection.createAnswer();
             await peerConnection.setLocalDescription(answer);
             ws.send(JSON.stringify({ type: "answer", room: roomName, answer }));
@@ -68,10 +71,10 @@ function joinRoom() {
         }
     };
 
-    setupPeerConnection(true);
+    setupPeerConnection(true); // Initiator setup
 }
 
-function setupPeerConnection(isInitiator) {
+function setupPeerConnection(isOfferer) {
     peerConnection = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
 
     peerConnection.onicecandidate = (event) => {
@@ -80,10 +83,17 @@ function setupPeerConnection(isInitiator) {
         }
     };
 
-    if (isInitiator) {
+    peerConnection.onconnectionstatechange = () => {
+        console.log("[WebRTC] Connection state:", peerConnection.connectionState);
+        updateConnectionStatus(peerConnection.connectionState);
+    };
+
+    if (isOfferer) {
+        isInitiator = true;
         console.log("[WebRTC] Creating DataChannel (Initiator)");
         dataChannel = peerConnection.createDataChannel("chat");
         setupDataChannel();
+        createOffer();
     } else {
         peerConnection.ondatachannel = (event) => {
             console.log("[WebRTC] DataChannel received (Receiver)");
@@ -91,11 +101,13 @@ function setupPeerConnection(isInitiator) {
             setupDataChannel();
         };
     }
+}
 
-    peerConnection.onconnectionstatechange = () => {
-        console.log("[WebRTC] Connection state:", peerConnection.connectionState);
-        updateConnectionStatus(peerConnection.connectionState === "connected" ? "connected" : "disconnected");
-    };
+async function createOffer() {
+    console.log("[WebRTC] Creating Offer...");
+    const offer = await peerConnection.createOffer();
+    await peerConnection.setLocalDescription(offer);
+    ws.send(JSON.stringify({ type: "offer", room: roomName, offer }));
 }
 
 function setupDataChannel() {
@@ -139,8 +151,15 @@ function displayMessage(text, isLocal) {
     document.getElementById("messages").appendChild(document.createElement("div")).className = "clearfix";
 }
 
-function updateConnectionStatus(status) {
-    document.getElementById("status").textContent = status === "connected" ? "🟢 Connected" : "🔴 Disconnected";
+function updateConnectionStatus(state) {
+    console.log("[WebRTC] Connection State:", state);
+    const statusElement = document.getElementById("status");
+
+    if (state === "connected") {
+        statusElement.textContent = "🟢 Connected";
+    } else if (state === "disconnected" || state === "failed" || state === "closed") {
+        statusElement.textContent = "🔴 Disconnected";
+    }
 }
 </script>
 
