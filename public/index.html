@@ -35,25 +35,29 @@ let peerConnection;
 let dataChannel;
 let ws;
 let roomName;
-let isInitiator = false; // Track whether this peer is the offerer
+let isInitiator = false;
 
 function joinRoom() {
     roomName = document.getElementById("roomInput").value;
     if (!roomName) return alert("Enter a room name!");
 
-    ws = new WebSocket("wss://zero-object.glitch.me/"); // Glitch WebSocket URL
+    ws = new WebSocket("wss://zero-object.glitch.me/"); // WebSocket signaling server
 
     ws.onopen = () => {
         console.log("[WebSocket] Connected to signaling server");
         ws.send(JSON.stringify({ type: "join", room: roomName }));
+        setupPeerConnection(true); // Only set up the connection when WebSocket is open
     };
+
+    ws.onerror = (error) => console.error("[WebSocket] Error:", error);
+    ws.onclose = () => console.warn("[WebSocket] Closed");
 
     ws.onmessage = async (event) => {
         const message = JSON.parse(event.data);
         console.log("[WebSocket] Received:", message);
 
         if (message.type === "offer") {
-            isInitiator = false; // This peer is the receiver
+            isInitiator = false;
             setupPeerConnection(false);
             await peerConnection.setRemoteDescription(new RTCSessionDescription(message.offer));
 
@@ -70,8 +74,6 @@ function joinRoom() {
             await peerConnection.addIceCandidate(new RTCIceCandidate(message.candidate));
         }
     };
-
-    setupPeerConnection(true); // Initiator setup
 }
 
 function setupPeerConnection(isOfferer) {
@@ -79,7 +81,9 @@ function setupPeerConnection(isOfferer) {
 
     peerConnection.onicecandidate = (event) => {
         if (event.candidate) {
-            ws.send(JSON.stringify({ type: "candidate", room: roomName, candidate: event.candidate }));
+            waitForWebSocket(() => {
+                ws.send(JSON.stringify({ type: "candidate", room: roomName, candidate: event.candidate }));
+            });
         }
     };
 
@@ -93,7 +97,7 @@ function setupPeerConnection(isOfferer) {
         console.log("[WebRTC] Creating DataChannel (Initiator)");
         dataChannel = peerConnection.createDataChannel("chat");
         setupDataChannel();
-        createOffer();
+        waitForWebSocket(createOffer); // Only create the offer when WebSocket is fully open
     } else {
         peerConnection.ondatachannel = (event) => {
             console.log("[WebRTC] DataChannel received (Receiver)");
@@ -159,6 +163,16 @@ function updateConnectionStatus(state) {
         statusElement.textContent = "🟢 Connected";
     } else if (state === "disconnected" || state === "failed" || state === "closed") {
         statusElement.textContent = "🔴 Disconnected";
+    }
+}
+
+// Helper function to wait until WebSocket is ready
+function waitForWebSocket(callback) {
+    if (ws.readyState === WebSocket.OPEN) {
+        callback();
+    } else {
+        console.log("[WebSocket] Waiting for connection...");
+        setTimeout(() => waitForWebSocket(callback), 100);
     }
 }
 </script>
