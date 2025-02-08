@@ -3,70 +3,24 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Zero Chat</title>
+    <title>Secure P2P Chat</title>
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            text-align: center;
-            background-color: #f4f4f9;
-        }
-        .container {
-            max-width: 600px;
-            margin: 50px auto;
-            background: white;
-            padding: 20px;
-            border-radius: 10px;
-            box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.1);
-        }
-        input, button {
-            width: 100%;
-            padding: 10px;
-            margin: 10px 0;
-            border-radius: 5px;
-            border: 1px solid #ddd;
-        }
-        button {
-            background: #6C63FF;
-            color: white;
-            cursor: pointer;
-        }
-        button:hover {
-            background: #5753d1;
-        }
-        .message-container {
-            height: 300px;
-            overflow-y: auto;
-            border: 1px solid #ddd;
-            padding: 10px;
-            background: #fafafa;
-            border-radius: 5px;
-        }
-        .message {
-            padding: 10px;
-            margin: 5px;
-            border-radius: 5px;
-            max-width: 70%;
-        }
-        .local {
-            background: #6C63FF;
-            color: white;
-            text-align: right;
-            float: right;
-        }
-        .remote {
-            background: #e0e0e0;
-            text-align: left;
-            float: left;
-        }
-        .clearfix {
-            clear: both;
-        }
+        body { font-family: Arial, sans-serif; text-align: center; background-color: #f4f4f9; }
+        .container { max-width: 600px; margin: 50px auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.1); }
+        input, button { width: 100%; padding: 10px; margin: 10px 0; border-radius: 5px; border: 1px solid #ddd; }
+        button { background: #6C63FF; color: white; cursor: pointer; }
+        button:hover { background: #5753d1; }
+        .message-container { height: 300px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; background: #fafafa; border-radius: 5px; }
+        .message { padding: 10px; margin: 5px; border-radius: 5px; max-width: 70%; }
+        .local { background: #6C63FF; color: white; text-align: right; float: right; }
+        .remote { background: #e0e0e0; text-align: left; float: left; }
+        .clearfix { clear: both; }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h2>Made with ❤️ by DJ</h2>
+    <h2>Secure P2P Chat</h2>
     <input type="text" id="roomInput" placeholder="Enter Room Name">
     <button onclick="joinRoom()">Join Room</button>
     <p id="status">🔴 Disconnected</p>
@@ -79,17 +33,37 @@
 <script>
     let peerConnection;
     let dataChannel;
-    let encryptionKey;
+    let ws;
     let roomName;
-    const ws = new WebSocket("wss://wanker.marvelmoonknight.workers.dev"); // Replace with your Cloudflare Worker URL
-
-    ws.onopen = () => console.log("Connected to WebSocket signaling server");
 
     function joinRoom() {
         roomName = document.getElementById("roomInput").value;
         if (!roomName) return alert("Enter a room name!");
-        encryptionKey = crypto.getRandomValues(new Uint8Array(32));
-        ws.send(JSON.stringify({ type: "join", room: roomName }));
+
+        ws = new WebSocket("wss://your-glitch-project.glitch.me"); // Replace with your Glitch WebSocket URL
+
+        ws.onopen = () => {
+            console.log("Connected to WebSocket signaling server");
+            ws.send(JSON.stringify({ type: "join", room: roomName }));
+        };
+
+        ws.onmessage = async (event) => {
+            const message = JSON.parse(event.data);
+            if (message.type === "offer") {
+                setupPeerConnection();
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(message.offer));
+                const answer = await peerConnection.createAnswer();
+                await peerConnection.setLocalDescription(answer);
+                ws.send(JSON.stringify({ type: "answer", room: roomName, answer }));
+            }
+            if (message.type === "answer") {
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(message.answer));
+            }
+            if (message.type === "candidate" && peerConnection) {
+                await peerConnection.addIceCandidate(new RTCIceCandidate(message.candidate));
+            }
+        };
+
         setupPeerConnection();
     }
 
@@ -102,79 +76,17 @@
             }
         };
 
-        peerConnection.ondatachannel = (event) => {
-            dataChannel = event.channel;
-            setupDataChannel();
+        dataChannel = peerConnection.createDataChannel("chat");
+        dataChannel.onopen = () => {
+            document.getElementById("sendBtn").disabled = false;
+            updateConnectionStatus("connected");
         };
+        dataChannel.onmessage = (event) => displayMessage(event.data, false);
 
         peerConnection.onconnectionstatechange = () => {
             updateConnectionStatus(peerConnection.connectionState === "connected" ? "connected" : "disconnected");
         };
     }
-
-    function setupDataChannel() {
-        dataChannel.onopen = () => {
-            document.getElementById("sendBtn").disabled = false;
-            updateConnectionStatus("connected");
-        };
-
-        dataChannel.onmessage = async (event) => {
-            const encryptedData = JSON.parse(event.data);
-            const decryptedMessage = await decryptMessage(encryptedData);
-            displayMessage(decryptedMessage, false);
-        };
-    }
-
-    async function encryptMessage(message) {
-        const iv = crypto.getRandomValues(new Uint8Array(12));
-        const key = await crypto.subtle.importKey("raw", encryptionKey, { name: "AES-GCM", iv }, false, ["encrypt"]);
-        const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(message));
-        return { iv: Array.from(iv), data: Array.from(new Uint8Array(encrypted)) };
-    }
-
-    async function decryptMessage(encryptedData) {
-        const iv = new Uint8Array(encryptedData.iv);
-        const key = await crypto.subtle.importKey("raw", encryptionKey, { name: "AES-GCM", iv }, false, ["decrypt"]);
-        const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, new Uint8Array(encryptedData.data));
-        return new TextDecoder().decode(decrypted);
-    }
-
-    async function sendMessage() {
-        const messageInput = document.getElementById("messageInput");
-        const encryptedMessage = await encryptMessage(messageInput.value);
-        dataChannel.send(JSON.stringify(encryptedMessage));
-        displayMessage("[Encrypted]", true);
-        messageInput.value = "";
-    }
-
-    function displayMessage(text, isLocal) {
-        const div = document.createElement("div");
-        div.className = "message " + (isLocal ? "local" : "remote");
-        div.textContent = text;
-        document.getElementById("messages").appendChild(div);
-        document.getElementById("messages").appendChild(document.createElement("div")).className = "clearfix";
-    }
-
-    function updateConnectionStatus(status) {
-        document.getElementById("status").textContent = status === "connected" ? "🟢 Connected" : "🔴 Disconnected";
-    }
-
-    ws.onmessage = async (event) => {
-        const message = JSON.parse(event.data);
-        if (message.type === "offer") {
-            setupPeerConnection();
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(message.offer));
-            const answer = await peerConnection.createAnswer();
-            await peerConnection.setLocalDescription(answer);
-            ws.send(JSON.stringify({ type: "answer", room: roomName, answer }));
-        }
-        if (message.type === "answer") {
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(message.answer));
-        }
-        if (message.type === "candidate" && peerConnection) {
-            await peerConnection.addIceCandidate(new RTCIceCandidate(message.candidate));
-        }
-    };
 </script>
 
 </body>
