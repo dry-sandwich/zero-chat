@@ -1,4 +1,4 @@
-let peerConnection = null; // Reset to null initially
+let peerConnection = null;
 let dataChannels = [];
 let ws = null;
 let roomName;
@@ -6,6 +6,7 @@ let isInitiator = false;
 let chatMode = "p2p";
 let username;
 let messageIdCounter = 0;
+let pendingIceCandidates = []; // Buffer for ICE candidates
 
 async function encryptMessage(message, key) {
     const encoder = new TextEncoder();
@@ -43,7 +44,7 @@ function joinRoom() {
         return;
     }
 
-    // Close existing WebSocket and peer connections
+    // Clean up existing connections
     if (ws) {
         ws.close();
         ws = null;
@@ -53,6 +54,7 @@ function joinRoom() {
         peerConnection = null;
     }
     dataChannels = [];
+    pendingIceCandidates = []; // Clear buffered candidates
 
     ws = new WebSocket("wss://silk-meadow-tourmaline.glitch.me"); // Update with your Glitch URL
 
@@ -82,6 +84,12 @@ function joinRoom() {
             setupPeerConnection(false);
             try {
                 await peerConnection.setRemoteDescription(new RTCSessionDescription(message.offer));
+                // Process any buffered ICE candidates
+                while (pendingIceCandidates.length > 0) {
+                    const candidate = pendingIceCandidates.shift();
+                    await peerConnection.addIceCandidate(candidate);
+                    console.log("[WebRTC] Processed buffered ICE candidate");
+                }
                 const answer = await peerConnection.createAnswer();
                 await peerConnection.setLocalDescription(answer);
                 ws.send(JSON.stringify({ type: "answer", room: roomName, answer, username }));
@@ -91,14 +99,26 @@ function joinRoom() {
         } else if (message.type === "answer" && peerConnection && peerConnection.signalingState !== "stable") {
             try {
                 await peerConnection.setRemoteDescription(new RTCSessionDescription(message.answer));
+                // Process any buffered ICE candidates
+                while (pendingIceCandidates.length > 0) {
+                    const candidate = pendingIceCandidates.shift();
+                    await peerConnection.addIceCandidate(candidate);
+                    console.log("[WebRTC] Processed buffered ICE candidate");
+                }
             } catch (e) {
                 console.error("[WebRTC] Error setting answer:", e);
             }
         } else if (message.type === "candidate" && peerConnection) {
-            try {
-                await peerConnection.addIceCandidate(new RTCIceCandidate(message.candidate));
-            } catch (e) {
-                console.error("[WebRTC] Error adding ICE candidate:", e);
+            if (peerConnection.remoteDescription) {
+                try {
+                    await peerConnection.addIceCandidate(new RTCIceCandidate(message.candidate));
+                    console.log("[WebRTC] Added ICE candidate successfully");
+                } catch (e) {
+                    console.error("[WebRTC] Error adding ICE candidate:", e);
+                }
+            } else {
+                console.log("[WebRTC] Buffering ICE candidate until remote description is set");
+                pendingIceCandidates.push(new RTCIceCandidate(message.candidate));
             }
         } else if (message.type === "new_peer" && chatMode === "group" && !peerConnection) {
             setupPeerConnection(true, message.id);
@@ -106,7 +126,6 @@ function joinRoom() {
             const decryptedText = await decryptMessage(message.data, encryptionKey);
             displayMessage(message.type, decryptedText, message.id, message.username, false);
         } else if (message.type === "peer_left") {
-            // Handle peer disconnection in group mode
             dataChannels = dataChannels.filter(dc => dc.target !== message.id);
             if (chatMode === "group" && dataChannels.length === 0) {
                 if (peerConnection) {
@@ -295,6 +314,11 @@ function switchChatMode() {
     dataChannels = [];
     document.getElementById("messages").innerHTML = "";
     document.getElementById("sendBtn").disabled = true;
+}
+
+function toggleTheme() {
+    document.body.classList.toggle("dark-mode");
+    document.getElementById("themeToggleBtn").textContent = document.body.classList.contains("dark-mode") ? "☀️" : "🌙";
 }
 
 // Event listeners
