@@ -9,20 +9,20 @@
 <body>
     <div class="container">
         <header class="header">
+            <button id="themeToggleBtn" onclick="toggleTheme()">☀️</button>
             <h2>Zero Chat <span>(by DJ)</span></h2>
-            <button id="themeToggleBtn" onclick="toggleTheme()">Dark Mode</button>
         </header>
         <div class="chat-controls">
-            <input type="text" id="usernameInput" placeholder="Enter Your Username" required>
-            <input type="text" id="roomInput" placeholder="Enter Room Name" required>
-            <button onclick="joinRoom()" id="joinBtn">Join Room</button>
-            <button id="modeBtn" onclick="switchChatMode()">Switch to Group Chat</button>
-            <p id="status">🔴 Disconnected</p>
+            <input type="text" id="usernameInput" placeholder="Name">
+            <input type="text" id="roomInput" placeholder="Room">
+            <button onclick="joinRoom()" id="joinBtn">Join</button>
+            <button id="modeBtn" onclick="switchChatMode()">👥</button>
+            <p id="status">🔴</p>
         </div>
         <div class="message-container" id="messages"></div>
         <div class="input-area">
-            <input type="text" id="messageInput" placeholder="Type a message or reaction (e.g., 👍)">
-            <button id="sendBtn" onclick="sendMessage()" disabled>Send</button>
+            <input type="text" id="messageInput" placeholder="Message">
+            <button id="sendBtn" onclick="sendMessage()" disabled>➡️</button>
         </div>
     </div>
     <script src="script.js"></script>

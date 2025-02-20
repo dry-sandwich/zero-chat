@@ -19,32 +19,31 @@ body.dark-mode {
     max-width: 600px;
     width: 90%;
     background: #fff;
-    padding: 20px;
+    padding: 15px;
     border-radius: 12px;
     box-shadow: 0 6px 12px rgba(0, 0, 0, 0.1);
-    transition: background-color 0.3s ease, color 0.3s ease;
+    transition: background-color 0.3s ease;
 }
 
 .dark-mode .container {
     background: #333;
-    color: #fff;
 }
 
 .header {
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    margin-bottom: 20px;
+    gap: 10px;
+    margin-bottom: 15px;
 }
 
 .header h2 {
     margin: 0;
-    font-size: 1.5em;
+    font-size: 1.2em;
     color: #6C63FF;
 }
 
 .header span {
-    font-size: 0.8em;
+    font-size: 0.7em;
     color: #888;
 }
 
@@ -53,39 +52,38 @@ body.dark-mode {
 }
 
 #themeToggleBtn {
-    padding: 8px 16px;
-    background: #6C63FF;
-    color: #fff;
+    background: none;
     border: none;
-    border-radius: 8px;
+    font-size: 1.2em;
+    padding: 0;
     cursor: pointer;
-    transition: background 0.3s ease;
-}
-
-#themeToggleBtn:hover {
-    background: #5753d1;
 }
 
 .chat-controls {
-    margin-bottom: 20px;
+    display: flex;
+    gap: 5px;
+    margin-bottom: 15px;
+    flex-wrap: wrap;
 }
 
-input, button {
-    padding: 10px;
-    margin: 5px 0;
-    border-radius: 8px;
+input {
+    padding: 8px;
+    border-radius: 6px;
     border: 1px solid #ddd;
-    width: 100%;
-    box-sizing: border-box;
+    flex: 1;
+    min-width: 80px;
 }
 
-.dark-mode input, .dark-mode button {
+.dark-mode input {
     background: #444;
     color: #fff;
     border-color: #555;
 }
 
 button {
+    padding: 8px;
+    border-radius: 6px;
+    border: none;
     background: #6C63FF;
     color: #fff;
     cursor: pointer;
@@ -101,9 +99,14 @@ button:disabled {
     cursor: not-allowed;
 }
 
+#joinBtn, #modeBtn, #sendBtn {
+    padding: 8px 12px;
+    font-size: 0.9em;
+}
+
 #status {
-    text-align: center;
-    margin: 10px 0;
+    margin: 0;
+    font-size: 1em;
 }
 
 .message-container {
@@ -113,7 +116,7 @@ button:disabled {
     padding: 10px;
     background: #fafafa;
     border-radius: 8px;
-    margin-bottom: 20px;
+    margin-bottom: 15px;
 }
 
 .dark-mode .message-container {
@@ -121,43 +124,43 @@ button:disabled {
     border-color: #555;
 }
 
-.message {
-    padding: 10px;
+.message-wrapper {
     margin: 5px 0;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+}
+
+.message-wrapper.local {
+    align-items: flex-end;
+}
+
+.username {
+    font-size: 0.8em;
+    color: #666;
+    margin-bottom: 2px;
+}
+
+.dark-mode .username {
+    color: #ccc;
+}
+
+.message {
+    padding: 8px 12px;
     border-radius: 8px;
     max-width: 70%;
-    position: relative;
     word-wrap: break-word;
+    position: relative;
     cursor: pointer;
 }
 
 .message:hover {
-    background: rgba(0, 0, 0, 0.05);
-}
-
-.dark-mode .message:hover {
-    background: rgba(255, 255, 255, 0.1);
-}
-
-.local {
-    background: #6C63FF;
-    color: #fff;
-    float: right;
-}
-
-.remote {
-    background: #e0e0e0;
-    float: left;
-}
-
-.dark-mode .remote {
-    background: #555;
+    opacity: 0.9;
 }
 
 .reaction {
     font-size: 0.9em;
     margin-left: 5px;
-    display: inline-block;
 }
 
 .clearfix {
@@ -166,5 +169,20 @@ button:disabled {
 
 .input-area {
     display: flex;
-    gap: 10px;
+    gap: 5px;
+}
+
+.emoji-picker {
+    position: absolute;
+    bottom: 30px;
+    background: #fff;
+    border: 1px solid #ddd;
+    padding: 5px;
+    border-radius: 6px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.dark-mode .emoji-picker {
+    background: #444;
+    border-color: #555;
 }
