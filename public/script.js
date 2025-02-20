@@ -91,7 +91,7 @@ function joinRoom() {
                 }
                 const answer = await peerConnection.createAnswer();
                 await peerConnection.setLocalDescription(answer);
-                ws.send(JSON.stringify({ type: "answer", room: roomName, answer, username }));
+                ws.send(JSON.stringify({ type: "answer", room: roomName, answer, username, target: message.target }));
             } catch (e) {
                 console.error("[WebRTC] Error setting offer/answer:", e);
             }
@@ -141,9 +141,10 @@ function setupPeerConnection(isOfferer, targetId = null) {
     }
     peerConnection = new RTCPeerConnection({
         iceServers: [
-      { urls: "stun:stun.l.google.com:19302" },
-      { urls: "turn:asia.relay.metered.ca:443?transport=tcp", username: "3a595dd020d950220fd31d35", credential: "FxnloMmUJJuOG/eX" } // Add TURN for better connectivity
-    ]
+            { urls: "stun:stun.l.google.com:19302" },
+            // Free TURN server (uncomment and use if STUN fails)
+            { urls: "turn:relay.metered.ca:80", username: "f2234a7d7a7d8d", credential: "f2234a7d7a7d8d" }
+        ]
     });
 
     peerConnection.onicecandidate = (event) => {
@@ -206,7 +207,7 @@ function setupDataChannel(dataChannel) {
     dataChannel.onopen = () => {
         document.getElementById("sendBtn").disabled = false;
         console.log("[WebRTC] DataChannel opened");
-        updateConnectionStatus("connected"); // Ensure status updates when channel opens
+        updateConnectionStatus("connected"); // Ensure status updates
     };
 
     dataChannel.onmessage = async (event) => {
