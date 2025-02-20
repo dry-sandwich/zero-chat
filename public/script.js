@@ -143,7 +143,7 @@ function setupPeerConnection(isOfferer, targetId = null) {
         iceServers: [
             { urls: "stun:stun.l.google.com:19302" },
             // Free TURN server (uncomment and use if STUN fails)
-            { urls: "turn:relay.metered.ca:80", username: "f2234a7d7a7d8d", credential: "f2234a7d7a7d8d" }
+            //{ urls: "turn:relay.metered.ca:80", username: "f2234a7d7a7d8d", credential: "f2234a7d7a7d8d" }
         ]
     });
 
