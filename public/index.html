@@ -7,20 +7,24 @@
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-
-<div class="container">
-    <h2>Zero Chat <h5>(by DJ)</h5></h2>
-    <input type="text" id="roomInput" placeholder="Enter Room Name (Group Chat Only)">
-    <button onclick="joinRoom()">Join Room</button>
-    <button id="modeBtn" onclick="switchChatMode()">Switch to Group Chat</button>
-    <p id="status">🔴 Disconnected</p>
-
-    <div class="message-container" id="messages"></div>
-    <input type="text" id="messageInput" placeholder="Type a message...">
-    <button id="sendBtn" onclick="sendMessage()" disabled>Send</button>
-</div>
-
-<script src="script.js"></script>
-
+    <div class="container">
+        <header class="header">
+            <h2>Zero Chat <span>(by DJ)</span></h2>
+            <button id="themeToggleBtn" onclick="toggleTheme()">Dark Mode</button>
+        </header>
+        <div class="chat-controls">
+            <input type="text" id="usernameInput" placeholder="Enter Your Username" required>
+            <input type="text" id="roomInput" placeholder="Enter Room Name" required>
+            <button onclick="joinRoom()" id="joinBtn">Join Room</button>
+            <button id="modeBtn" onclick="switchChatMode()">Switch to Group Chat</button>
+            <p id="status">🔴 Disconnected</p>
+        </div>
+        <div class="message-container" id="messages"></div>
+        <div class="input-area">
+            <input type="text" id="messageInput" placeholder="Type a message or reaction (e.g., 👍)">
+            <button id="sendBtn" onclick="sendMessage()" disabled>Send</button>
+        </div>
+    </div>
+    <script src="script.js"></script>
 </body>
 </html>
