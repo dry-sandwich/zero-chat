@@ -1,6 +1,6 @@
-let peerConnection;
+let peerConnection = null; // Reset to null initially
 let dataChannels = [];
-let ws;
+let ws = null;
 let roomName;
 let isInitiator = false;
 let chatMode = "p2p";
@@ -43,8 +43,19 @@ function joinRoom() {
         return;
     }
 
+    // Close existing WebSocket and peer connections
+    if (ws) {
+        ws.close();
+        ws = null;
+    }
+    if (peerConnection) {
+        peerConnection.close();
+        peerConnection = null;
+    }
+    dataChannels = [];
+
     ws = new WebSocket("wss://silk-meadow-tourmaline.glitch.me"); // Update with your Glitch URL
-	
+
     ws.onopen = async () => {
         console.log("[WebSocket] Connected");
         encryptionKey = await generateKey();
@@ -56,33 +67,65 @@ function joinRoom() {
     ws.onclose = () => {
         console.warn("[WebSocket] Closed");
         updateConnectionStatus("disconnected");
+        if (peerConnection) {
+            peerConnection.close();
+            peerConnection = null;
+        }
     };
 
     ws.onmessage = async (event) => {
         const message = JSON.parse(event.data);
-        if (message.type === "offer") {
+        console.log("[WebSocket] Received:", message);
+
+        if (message.type === "offer" && !peerConnection) {
             isInitiator = false;
             setupPeerConnection(false);
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(message.offer));
-            const answer = await peerConnection.createAnswer();
-            await peerConnection.setLocalDescription(answer);
-            ws.send(JSON.stringify({ type: "answer", room: roomName, answer, username }));
-        } else if (message.type === "answer") {
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(message.answer));
+            try {
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(message.offer));
+                const answer = await peerConnection.createAnswer();
+                await peerConnection.setLocalDescription(answer);
+                ws.send(JSON.stringify({ type: "answer", room: roomName, answer, username }));
+            } catch (e) {
+                console.error("[WebRTC] Error setting offer/answer:", e);
+            }
+        } else if (message.type === "answer" && peerConnection && peerConnection.signalingState !== "stable") {
+            try {
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(message.answer));
+            } catch (e) {
+                console.error("[WebRTC] Error setting answer:", e);
+            }
         } else if (message.type === "candidate" && peerConnection) {
-            await peerConnection.addIceCandidate(new RTCIceCandidate(message.candidate));
-        } else if (message.type === "new_peer" && chatMode === "group") {
+            try {
+                await peerConnection.addIceCandidate(new RTCIceCandidate(message.candidate));
+            } catch (e) {
+                console.error("[WebRTC] Error adding ICE candidate:", e);
+            }
+        } else if (message.type === "new_peer" && chatMode === "group" && !peerConnection) {
             setupPeerConnection(true, message.id);
+        } else if (message.type === "text" || message.type === "reaction") {
+            const decryptedText = await decryptMessage(message.data, encryptionKey);
+            displayMessage(message.type, decryptedText, message.id, message.username, false);
+        } else if (message.type === "peer_left") {
+            // Handle peer disconnection in group mode
+            dataChannels = dataChannels.filter(dc => dc.target !== message.id);
+            if (chatMode === "group" && dataChannels.length === 0) {
+                if (peerConnection) {
+                    peerConnection.close();
+                    peerConnection = null;
+                }
+            }
         }
     };
 }
 
 function setupPeerConnection(isOfferer, targetId = null) {
-    const config = { iceServers: [
+    if (peerConnection) {
+        peerConnection.close();
+    }
+    peerConnection = new RTCPeerConnection({ iceServers: [
       { urls: "stun:stun.l.google.com:19302" },
       { urls: "turn:asia.relay.metered.ca:443?transport=tcp", username: "3a595dd020d950220fd31d35", credential: "FxnloMmUJJuOG/eX" } // Add TURN for better connectivity
-    ] };
-    peerConnection = new RTCPeerConnection(config);
+    ] });
 
     peerConnection.onicecandidate = (event) => {
         if (event.candidate) {
@@ -94,6 +137,10 @@ function setupPeerConnection(isOfferer, targetId = null) {
 
     peerConnection.onconnectionstatechange = () => {
         updateConnectionStatus(peerConnection.connectionState);
+    };
+
+    peerConnection.onsignalingstatechange = () => {
+        console.log("[WebRTC] Signaling state:", peerConnection.signalingState);
     };
 
     if (isOfferer) {
@@ -112,14 +159,23 @@ function setupPeerConnection(isOfferer, targetId = null) {
 }
 
 async function createOffer(targetId) {
-    const offer = await peerConnection.createOffer();
-    await peerConnection.setLocalDescription(offer);
-    ws.send(JSON.stringify({ type: "offer", room: roomName, offer, target: targetId, username }));
+    if (!peerConnection || peerConnection.signalingState === "closed") {
+        console.error("[WebRTC] Peer connection not ready or closed");
+        return;
+    }
+    try {
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
+        ws.send(JSON.stringify({ type: "offer", room: roomName, offer, target: targetId, username }));
+    } catch (e) {
+        console.error("[WebRTC] Error creating offer:", e);
+    }
 }
 
 function setupDataChannel(dataChannel) {
     dataChannel.onopen = () => {
         document.getElementById("sendBtn").disabled = false;
+        console.log("[WebRTC] DataChannel opened");
     };
 
     dataChannel.onmessage = async (event) => {
@@ -129,7 +185,16 @@ function setupDataChannel(dataChannel) {
     };
 
     dataChannel.onerror = (error) => console.error("[WebRTC] Error:", error);
-    dataChannel.onclose = () => console.log("[WebRTC] Closed");
+    dataChannel.onclose = () => {
+        console.log("[WebRTC] DataChannel closed");
+        if (chatMode === "group") {
+            dataChannels = dataChannels.filter(dc => dc.dc !== dataChannel);
+            if (dataChannels.length === 0 && peerConnection) {
+                peerConnection.close();
+                peerConnection = null;
+            }
+        }
+    };
 }
 
 async function sendMessage() {
@@ -181,7 +246,7 @@ function displayMessage(type, text, id, sender, isLocal) {
     const messagesDiv = document.getElementById("messages");
     if (type === "text") {
         const wrapper = document.createElement("div");
-        wrapper.className = `message-wrapper ${isLocal ? "local" : ""}`;
+        wrapper.className = `message-wrapper ${isLocal ? "local" : "remote"}`;
 
         const userDiv = document.createElement("div");
         userDiv.className = "username";
@@ -213,7 +278,7 @@ function updateConnectionStatus(state) {
 }
 
 function waitForWebSocket(callback) {
-    if (ws.readyState === WebSocket.OPEN) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
         callback();
     } else {
         setTimeout(() => waitForWebSocket(callback), 100);
@@ -223,15 +288,13 @@ function waitForWebSocket(callback) {
 function switchChatMode() {
     chatMode = chatMode === "p2p" ? "group" : "p2p";
     document.getElementById("modeBtn").textContent = chatMode === "p2p" ? "👥" : "👤";
-    if (peerConnection) peerConnection.close();
+    if (peerConnection) {
+        peerConnection.close();
+        peerConnection = null;
+    }
     dataChannels = [];
     document.getElementById("messages").innerHTML = "";
     document.getElementById("sendBtn").disabled = true;
-}
-
-function toggleTheme() {
-    document.body.classList.toggle("dark-mode");
-    document.getElementById("themeToggleBtn").textContent = document.body.classList.contains("dark-mode") ? "☀️" : "🌙";
 }
 
 // Event listeners
@@ -239,6 +302,9 @@ document.getElementById("messageInput").addEventListener("keypress", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         sendMessage();
+    } else if (e.key === "Enter" && e.shiftKey) {
+        e.preventDefault();
+        document.getElementById("messageInput").value += "\n";
     }
 });
 
