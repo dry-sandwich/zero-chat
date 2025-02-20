@@ -84,7 +84,6 @@ function joinRoom() {
             setupPeerConnection(false);
             try {
                 await peerConnection.setRemoteDescription(new RTCSessionDescription(message.offer));
-                // Process any buffered ICE candidates
                 while (pendingIceCandidates.length > 0) {
                     const candidate = pendingIceCandidates.shift();
                     await peerConnection.addIceCandidate(candidate);
@@ -99,7 +98,6 @@ function joinRoom() {
         } else if (message.type === "answer" && peerConnection && peerConnection.signalingState !== "stable") {
             try {
                 await peerConnection.setRemoteDescription(new RTCSessionDescription(message.answer));
-                // Process any buffered ICE candidates
                 while (pendingIceCandidates.length > 0) {
                     const candidate = pendingIceCandidates.shift();
                     await peerConnection.addIceCandidate(candidate);
@@ -141,10 +139,12 @@ function setupPeerConnection(isOfferer, targetId = null) {
     if (peerConnection) {
         peerConnection.close();
     }
-    peerConnection = new RTCPeerConnection({ iceServers: [
+    peerConnection = new RTCPeerConnection({
+        iceServers: [
       { urls: "stun:stun.l.google.com:19302" },
       { urls: "turn:asia.relay.metered.ca:443?transport=tcp", username: "3a595dd020d950220fd31d35", credential: "FxnloMmUJJuOG/eX" } // Add TURN for better connectivity
-    ] });
+    ]
+    });
 
     peerConnection.onicecandidate = (event) => {
         if (event.candidate) {
@@ -155,11 +155,28 @@ function setupPeerConnection(isOfferer, targetId = null) {
     };
 
     peerConnection.onconnectionstatechange = () => {
-        updateConnectionStatus(peerConnection.connectionState);
+        const state = peerConnection.connectionState;
+        console.log("[WebRTC] Connection state:", state);
+        updateConnectionStatus(state);
+        if (state === "connected") {
+            console.log("[WebRTC] Data channel should be open now");
+        } else if (state === "failed" || state === "disconnected") {
+            console.error("[WebRTC] Connection failed or disconnected");
+            if (peerConnection) {
+                peerConnection.close();
+                peerConnection = null;
+            }
+        }
     };
 
     peerConnection.onsignalingstatechange = () => {
         console.log("[WebRTC] Signaling state:", peerConnection.signalingState);
+    };
+
+    peerConnection.ondatachannel = (event) => {
+        const dataChannel = event.channel;
+        if (chatMode === "group") dataChannels.push({ dc: dataChannel, target: null });
+        setupDataChannel(dataChannel);
     };
 
     if (isOfferer) {
@@ -168,12 +185,6 @@ function setupPeerConnection(isOfferer, targetId = null) {
         if (chatMode === "group") dataChannels.push({ dc: dataChannel, target: targetId });
         setupDataChannel(dataChannel);
         waitForWebSocket(() => createOffer(targetId));
-    } else {
-        peerConnection.ondatachannel = (event) => {
-            const dataChannel = event.channel;
-            if (chatMode === "group") dataChannels.push({ dc: dataChannel, target: null });
-            setupDataChannel(dataChannel);
-        };
     }
 }
 
@@ -195,12 +206,14 @@ function setupDataChannel(dataChannel) {
     dataChannel.onopen = () => {
         document.getElementById("sendBtn").disabled = false;
         console.log("[WebRTC] DataChannel opened");
+        updateConnectionStatus("connected"); // Ensure status updates when channel opens
     };
 
     dataChannel.onmessage = async (event) => {
         const message = JSON.parse(event.data);
         const decryptedText = await decryptMessage(message.data, encryptionKey);
         displayMessage(message.type, decryptedText, message.id, message.username, false);
+        console.log("[WebRTC] Received message:", decryptedText);
     };
 
     dataChannel.onerror = (error) => console.error("[WebRTC] Error:", error);
@@ -211,6 +224,7 @@ function setupDataChannel(dataChannel) {
             if (dataChannels.length === 0 && peerConnection) {
                 peerConnection.close();
                 peerConnection = null;
+                updateConnectionStatus("disconnected");
             }
         }
     };
@@ -293,7 +307,8 @@ function displayMessage(type, text, id, sender, isLocal) {
 }
 
 function updateConnectionStatus(state) {
-    document.getElementById("status").textContent = state === "connected" ? "🟢" : "🔴";
+    const statusElement = document.getElementById("status");
+    statusElement.textContent = state === "connected" ? "🟢" : "🔴";
 }
 
 function waitForWebSocket(callback) {
