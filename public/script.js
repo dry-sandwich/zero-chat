@@ -55,7 +55,7 @@ function joinRoom() {
     pendingIceCandidates = [];
 
     // Use correct WebSocket URL (update based on your server deployment)
-    ws = new WebSocket(`wss://${window.location.hostname}${window.location.port ? ':' + window.location.port : ''}`);
+    ws = new WebSocket("wss://https://silk-meadow-tourmaline.glitch.me/");
 
     ws.onopen = async () => {
         console.log("[WebSocket] Connected");
