@@ -6,7 +6,7 @@ let isInitiator = false;
 let chatMode = "p2p";
 let username;
 let messageIdCounter = 0;
-let pendingIceCandidates = [];
+let pendingIceCandidates = []; // Buffer for ICE candidates
 
 async function encryptMessage(message, key) {
     const encoder = new TextEncoder();
@@ -29,7 +29,7 @@ async function decryptMessage(encryptedData, key) {
 }
 
 async function generateKey() {
-    return crypto.subtle.generateKey(
+    return await crypto.subtle.generateKey(
         { name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]
     );
 }
@@ -44,18 +44,19 @@ function joinRoom() {
         return;
     }
 
+    // Clean up existing connections
     if (ws) {
         ws.close();
+        ws = null;
     }
     if (peerConnection) {
         peerConnection.close();
         peerConnection = null;
     }
     dataChannels = [];
-    pendingIceCandidates = [];
+    pendingIceCandidates = []; // Clear buffered candidates
 
-    // Use correct WebSocket URL (update based on your server deployment)
-    ws = new WebSocket("wss://silk-meadow-tourmaline.glitch.me");
+    ws = new WebSocket("wss://silk-meadow-tourmaline.glitch.me"); // Update with your Glitch URL
 
     ws.onopen = async () => {
         console.log("[WebSocket] Connected");
@@ -68,78 +69,102 @@ function joinRoom() {
     ws.onclose = () => {
         console.warn("[WebSocket] Closed");
         updateConnectionStatus("disconnected");
-        cleanupPeerConnection();
+        if (peerConnection) {
+            peerConnection.close();
+            peerConnection = null;
+        }
     };
 
     ws.onmessage = async (event) => {
-        let message;
-        try {
-            message = JSON.parse(event.data);
-        } catch (e) {
-            console.error("[WebSocket] Invalid message:", e);
-            return;
-        }
+        const message = JSON.parse(event.data);
         console.log("[WebSocket] Received:", message);
-
-        if (message.type === "error") {
-            alert(`Server Error: ${message.message}`);
-            return;
-        }
 
         if (message.type === "offer" && !peerConnection) {
             isInitiator = false;
             setupPeerConnection(false);
-            await handleOffer(message);
-        } else if (message.type === "answer" && peerConnection?.signalingState !== "stable") {
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(message.answer));
-            processPendingIceCandidates();
-        } else if (message.type === "candidate" && peerConnection) {
-            const candidate = new RTCIceCandidate(message.candidate);
-            if (peerConnection.remoteDescription) {
-                await peerConnection.addIceCandidate(candidate);
-            } else {
-                pendingIceCandidates.push(candidate);
+            try {
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(message.offer));
+                while (pendingIceCandidates.length > 0) {
+                    const candidate = pendingIceCandidates.shift();
+                    await peerConnection.addIceCandidate(candidate);
+                    console.log("[WebRTC] Processed buffered ICE candidate");
+                }
+                const answer = await peerConnection.createAnswer();
+                await peerConnection.setLocalDescription(answer);
+                ws.send(JSON.stringify({ type: "answer", room: roomName, answer, username, target: message.target }));
+            } catch (e) {
+                console.error("[WebRTC] Error setting offer/answer:", e);
             }
-        } else if (message.type === "new_peer" && chatMode === "group") {
+        } else if (message.type === "answer" && peerConnection && peerConnection.signalingState !== "stable") {
+            try {
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(message.answer));
+                while (pendingIceCandidates.length > 0) {
+                    const candidate = pendingIceCandidates.shift();
+                    await peerConnection.addIceCandidate(candidate);
+                    console.log("[WebRTC] Processed buffered ICE candidate");
+                }
+            } catch (e) {
+                console.error("[WebRTC] Error setting answer:", e);
+            }
+        } else if (message.type === "candidate" && peerConnection) {
+            if (peerConnection.remoteDescription) {
+                try {
+                    await peerConnection.addIceCandidate(new RTCIceCandidate(message.candidate));
+                    console.log("[WebRTC] Added ICE candidate successfully");
+                } catch (e) {
+                    console.error("[WebRTC] Error adding ICE candidate:", e);
+                }
+            } else {
+                console.log("[WebRTC] Buffering ICE candidate until remote description is set");
+                pendingIceCandidates.push(new RTCIceCandidate(message.candidate));
+            }
+        } else if (message.type === "new_peer" && chatMode === "group" && !peerConnection) {
             setupPeerConnection(true, message.id);
         } else if (message.type === "text" || message.type === "reaction") {
             const decryptedText = await decryptMessage(message.data, encryptionKey);
             displayMessage(message.type, decryptedText, message.id, message.username, false);
         } else if (message.type === "peer_left") {
-            handlePeerLeft(message.id);
+            dataChannels = dataChannels.filter(dc => dc.target !== message.id);
+            if (chatMode === "group" && dataChannels.length === 0) {
+                if (peerConnection) {
+                    peerConnection.close();
+                    peerConnection = null;
+                }
+            }
         }
     };
 }
 
-async function handleOffer(message) {
-    try {
-        await peerConnection.setRemoteDescription(new RTCSessionDescription(message.offer));
-        processPendingIceCandidates();
-        const answer = await peerConnection.createAnswer();
-        await peerConnection.setLocalDescription(answer);
-        ws.send(JSON.stringify({ type: "answer", room: roomName, answer, username, target: message.target }));
-    } catch (e) {
-        console.error("[WebRTC] Error handling offer:", e);
-    }
-}
-
-function processPendingIceCandidates() {
-    while (pendingIceCandidates.length > 0) {
-        const candidate = pendingIceCandidates.shift();
-        peerConnection.addIceCandidate(candidate).catch(e => console.error("[WebRTC] Error adding buffered ICE:", e));
-    }
-}
-
 function setupPeerConnection(isOfferer, targetId = null) {
-    cleanupPeerConnection();
+    if (peerConnection) {
+        peerConnection.close();
+    }
     peerConnection = new RTCPeerConnection({
         iceServers: [
-            { urls: "stun:stun.relay.metered.ca:80" },
-            { urls: "turn:global.relay.metered.ca:80", username: "3a595dd020d950220fd31d35", credential: "FxnloMmUJJuOG/eX" },
-            { urls: "turn:global.relay.metered.ca:80?transport=tcp", username: "3a595dd020d950220fd31d35", credential: "FxnloMmUJJuOG/eX" },
-            { urls: "turn:global.relay.metered.ca:443", username: "3a595dd020d950220fd31d35", credential: "FxnloMmUJJuOG/eX" },
-            { urls: "turns:global.relay.metered.ca:443?transport=tcp", username: "3a595dd020d950220fd31d35", credential: "FxnloMmUJJuOG/eX" }
-        ]
+      {
+        urls: "stun:stun.relay.metered.ca:80",
+      },
+      {
+        urls: "turn:global.relay.metered.ca:80",
+        username: "3a595dd020d950220fd31d35",
+        credential: "FxnloMmUJJuOG/eX",
+      },
+      {
+        urls: "turn:global.relay.metered.ca:80?transport=tcp",
+        username: "3a595dd020d950220fd31d35",
+        credential: "FxnloMmUJJuOG/eX",
+      },
+      {
+        urls: "turn:global.relay.metered.ca:443",
+        username: "3a595dd020d950220fd31d35",
+        credential: "FxnloMmUJJuOG/eX",
+      },
+      {
+        urls: "turns:global.relay.metered.ca:443?transport=tcp",
+        username: "3a595dd020d950220fd31d35",
+        credential: "FxnloMmUJJuOG/eX",
+      },
+  ],
     });
 
     peerConnection.onicecandidate = (event) => {
@@ -154,9 +179,19 @@ function setupPeerConnection(isOfferer, targetId = null) {
         const state = peerConnection.connectionState;
         console.log("[WebRTC] Connection state:", state);
         updateConnectionStatus(state);
-        if (state === "failed" || state === "disconnected") {
-            cleanupPeerConnection();
+        if (state === "connected") {
+            console.log("[WebRTC] Data channel should be open now");
+        } else if (state === "failed" || state === "disconnected") {
+            console.error("[WebRTC] Connection failed or disconnected");
+            if (peerConnection) {
+                peerConnection.close();
+                peerConnection = null;
+            }
         }
+    };
+
+    peerConnection.onsignalingstatechange = () => {
+        console.log("[WebRTC] Signaling state:", peerConnection.signalingState);
     };
 
     peerConnection.ondatachannel = (event) => {
@@ -174,15 +209,11 @@ function setupPeerConnection(isOfferer, targetId = null) {
     }
 }
 
-function cleanupPeerConnection() {
-    if (peerConnection) {
-        peerConnection.close();
-        peerConnection = null;
-    }
-}
-
 async function createOffer(targetId) {
-    if (!peerConnection || peerConnection.signalingState === "closed") return;
+    if (!peerConnection || peerConnection.signalingState === "closed") {
+        console.error("[WebRTC] Peer connection not ready or closed");
+        return;
+    }
     try {
         const offer = await peerConnection.createOffer();
         await peerConnection.setLocalDescription(offer);
@@ -196,44 +227,47 @@ function setupDataChannel(dataChannel) {
     dataChannel.onopen = () => {
         document.getElementById("sendBtn").disabled = false;
         console.log("[WebRTC] DataChannel opened");
-        updateConnectionStatus("connected");
+        updateConnectionStatus("connected"); // Ensure status updates
     };
 
     dataChannel.onmessage = async (event) => {
         const message = JSON.parse(event.data);
         const decryptedText = await decryptMessage(message.data, encryptionKey);
         displayMessage(message.type, decryptedText, message.id, message.username, false);
+        console.log("[WebRTC] Received message:", decryptedText);
     };
 
-    dataChannel.onerror = (error) => console.error("[WebRTC] DataChannel Error:", error);
+    dataChannel.onerror = (error) => console.error("[WebRTC] Error:", error);
     dataChannel.onclose = () => {
         console.log("[WebRTC] DataChannel closed");
-        handleDataChannelClose(dataChannel);
-    };
-}
-
-function handleDataChannelClose(dataChannel) {
-    if (chatMode === "group") {
-        dataChannels = dataChannels.filter(dc => dc.dc !== dataChannel);
-        if (dataChannels.length === 0) {
-            cleanupPeerConnection();
-            updateConnectionStatus("disconnected");
+        if (chatMode === "group") {
+            dataChannels = dataChannels.filter(dc => dc.dc !== dataChannel);
+            if (dataChannels.length === 0 && peerConnection) {
+                peerConnection.close();
+                peerConnection = null;
+                updateConnectionStatus("disconnected");
+            }
         }
-    } else {
-        document.getElementById("sendBtn").disabled = true;
-    }
+    };
 }
 
 async function sendMessage() {
     const messageInput = document.getElementById("messageInput");
     const messageText = messageInput.value.trim();
-    if (!messageText || !dataChannels.some(dc => dc.dc.readyState === "open")) return;
+    if (!messageText) return;
 
     const messageId = `msg-${messageIdCounter++}`;
     const encryptedMessage = await encryptMessage(messageText, encryptionKey);
     const payload = { type: "text", data: encryptedMessage, id: messageId, username };
 
-    sendToDataChannels(payload);
+    if (chatMode === "p2p" && peerConnection?.dataChannel?.readyState === "open") {
+        peerConnection.dataChannel.send(JSON.stringify(payload));
+    } else if (chatMode === "group") {
+        dataChannels.forEach(({ dc }) => {
+            if (dc.readyState === "open") dc.send(JSON.stringify(payload));
+        });
+    }
+
     displayMessage("text", messageText, messageId, username, true);
     messageInput.value = "";
 }
@@ -242,11 +276,6 @@ async function sendReaction(messageId, emoji) {
     const encryptedReaction = await encryptMessage(emoji, encryptionKey);
     const payload = { type: "reaction", data: encryptedReaction, id: messageId, username };
 
-    sendToDataChannels(payload);
-    displayMessage("reaction", emoji, messageId, username, true);
-}
-
-function sendToDataChannels(payload) {
     if (chatMode === "p2p" && peerConnection?.dataChannel?.readyState === "open") {
         peerConnection.dataChannel.send(JSON.stringify(payload));
     } else if (chatMode === "group") {
@@ -254,6 +283,8 @@ function sendToDataChannels(payload) {
             if (dc.readyState === "open") dc.send(JSON.stringify(payload));
         });
     }
+
+    displayMessage("reaction", emoji, messageId, username, true);
 }
 
 function getUserColor(username) {
@@ -261,7 +292,8 @@ function getUserColor(username) {
     for (let i = 0; i < username.length; i++) {
         hash = username.charCodeAt(i) + ((hash << 5) - hash);
     }
-    return `hsl(${hash % 360}, 70%, 60%)`;
+    const hue = hash % 360;
+    return `hsl(${hue}, 70%, 60%)`;
 }
 
 function displayMessage(type, text, id, sender, isLocal) {
@@ -301,7 +333,7 @@ function updateConnectionStatus(state) {
 }
 
 function waitForWebSocket(callback) {
-    if (ws?.readyState === WebSocket.OPEN) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
         callback();
     } else {
         setTimeout(() => waitForWebSocket(callback), 100);
@@ -311,17 +343,13 @@ function waitForWebSocket(callback) {
 function switchChatMode() {
     chatMode = chatMode === "p2p" ? "group" : "p2p";
     document.getElementById("modeBtn").textContent = chatMode === "p2p" ? "👥" : "👤";
-    cleanupPeerConnection();
+    if (peerConnection) {
+        peerConnection.close();
+        peerConnection = null;
+    }
     dataChannels = [];
     document.getElementById("messages").innerHTML = "";
     document.getElementById("sendBtn").disabled = true;
-}
-
-function handlePeerLeft(peerId) {
-    dataChannels = dataChannels.filter(dc => dc.target !== peerId);
-    if (chatMode === "group" && dataChannels.length === 0) {
-        cleanupPeerConnection();
-    }
 }
 
 function toggleTheme() {
